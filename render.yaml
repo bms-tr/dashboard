@@ -22,17 +22,14 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.6
 
-      # --- Autenticación ---
       - key: AUTH_USER
         sync: false
       - key: AUTH_PASSWORD
         sync: false
 
-      # --- Supabase ---
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
       - key: SUPABASE_TABLE
         value: bms_dashboard
-``
