@@ -3,7 +3,7 @@ services:
     name: bms-dashboard
     env: python
     plan: free
-    autoDeploy: true
+    autoDeploy: false
 
     buildCommand: |
       pip install --upgrade pip
