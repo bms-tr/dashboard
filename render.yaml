@@ -1,9 +1,38 @@
+
 services:
   - type: web
     name: bms-dashboard
     env: python
-    runtime: python3
-    plan: free
-    branch: main
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "streamlit run app.py --server.port 10000 --server.address 0.0.0.0"
+    plan: free              # para pruebas; sube a 'starter' si necesitas más recursos
+    region: frankfurt
+    autoDeploy: true
+
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+
+    startCommand: >
+      streamlit run app.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.6
+
+      # --- Autenticación simple del dashboard ---
+      - key: AUTH_USER
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+
+      # --- Supabase (solo lectura desde el dashboard) ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_TABLE
+        value: bms_dashboard
+``
