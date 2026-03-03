@@ -1,9 +1,8 @@
-
 services:
   - type: web
     name: bms-dashboard
     env: python
-    plan: free              # para pruebas; sube a 'starter' si necesitas más recursos
+    plan: free
     region: frankfurt
     autoDeploy: true
 
@@ -18,17 +17,18 @@ services:
       --server.headless true
 
     healthCheckPath: /
+
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.6
 
-      # --- Autenticación simple del dashboard ---
+      # --- Autenticación ---
       - key: AUTH_USER
         sync: false
       - key: AUTH_PASSWORD
         sync: false
 
-      # --- Supabase (solo lectura desde el dashboard) ---
+      # --- Supabase ---
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
