@@ -3,7 +3,6 @@ services:
     name: bms-dashboard
     env: python
     plan: free
-    region: frankfurt
     autoDeploy: true
 
     buildCommand: |
