@@ -1,62 +1,89 @@
+import time
 import streamlit as st
 import pandas as pd
 import requests
+import plotly.express as px
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo  # Python 3.11 OK
 
 # ------------------------------------------------------------
-# CONFIG
+# CONFIGURACIÓN GENERAL
 # ------------------------------------------------------------
 st.set_page_config(page_title="BMS Dashboard", layout="wide")
+LOCAL_TZ = ZoneInfo("Europe/Madrid")
+AUTO_REFRESH_SECONDS = 60  # refresco cada minuto
+
+# Ocultar menú/header/footer para modo monitor
+st.markdown(
+    """
+    <style>
+      #MainMenu {visibility: hidden;}
+      header {visibility: hidden;}
+      footer {visibility: hidden;}
+      .big-total {font-size: 64px; font-weight: 800; line-height: 1.0; margin: 0.2rem 0 1rem 0;}
+      .sub {font-size: 14px; color: #888;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# Mantener estado de login entre refrescos
+st.session_state.setdefault("auth_ok", False)
 
 # ------------------------------------------------------------
-# LOGIN (simple con st.secrets)
+# LOGIN (simple con st.secrets; persistente durante la sesión del navegador)
 # ------------------------------------------------------------
 def require_login():
-    if "auth_ok" not in st.session_state:
-        st.session_state.auth_ok = False
-    if st.session_state.auth_ok:
+    if st.session_state.get("auth_ok"):
         return True
 
     st.title("🔐 Acceso")
-    u = st.text_input("Usuario", key="u")
-    p = st.text_input("Contraseña", type="password", key="p")
+    u = st.text_input("Usuario")
+    p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        if u == st.secrets["auth"]["user"] and p == st.secrets["auth"]["password"]:
-            st.session_state.auth_ok = True
-            st.experimental_rerun()
-        else:
-            st.error("Credenciales incorrectas.")
+        try:
+            if u == st.secrets["auth"]["user"] and p == st.secrets["auth"]["password"]:
+                st.session_state["auth_ok"] = True
+                st.success("Acceso concedido.")
+                st.experimental_rerun()
+            else:
+                st.error("Credenciales incorrectas.")
+        except Exception:
+            st.error("No se han encontrado secretos. Configura el secrets.toml.")
     st.stop()
 
+require_login()
+
 # ------------------------------------------------------------
-# SUPABASE REST
+# LECTURA DESDE SUPABASE (REST)
 # ------------------------------------------------------------
 def iso_z(dt: datetime) -> str:
+    """Convierte a ISO Z (UTC)."""
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.DataFrame:
+@st.cache_data(ttl=50, show_spinner=False)
+def supabase_select_last_hours(hours: int = 24) -> pd.DataFrame:
+    """
+    Trae lecturas del rango [now-hrs, now] y devuelve DataFrame con:
+      timestamp_utc (UTC), punto_alias, punto_clave, valor (float)
+    """
     base_url = st.secrets["supabase"]["url"].rstrip("/")
     key      = st.secrets["supabase"]["key"]
     table    = st.secrets["supabase"]["table"]
 
     to_dt   = datetime.now(timezone.utc)
-    from_dt = to_dt - timedelta(days=days)
+    from_dt = to_dt - timedelta(hours=hours)
 
     params = {
         "select": "timestamp_utc,punto_alias,punto_clave,valor",
         "timestamp_utc": f"gte.{iso_z(from_dt)}",
         "order": "timestamp_utc.asc",
     }
-    query = urlencode(params)
-    query += f"&timestamp_utc=lte.{iso_z(to_dt)}"
-
-    if punto_clave:
-        query += f"&punto_clave=eq.{punto_clave}"
-
+    query = urlencode(params) + f"&timestamp_utc=lte.{iso_z(to_dt)}"
     url = f"{base_url}/rest/v1/{table}?{query}"
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
 
+    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
     r = requests.get(url, headers=headers, timeout=15)
     if r.status_code >= 400:
         raise RuntimeError(f"Supabase SELECT HTTP {r.status_code}: {r.text}")
@@ -66,67 +93,114 @@ def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.D
         return df
 
     df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True, errors="coerce")
-    # Convertir a numérico si aplica
     if "valor" in df.columns:
         df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
     return df
 
+def normalize_alias(s: str | None) -> str:
+    """Normaliza alias para comparaciones tolerantes (mayúsculas y espacios simples)."""
+    if not s:
+        return ""
+    s = " ".join(str(s).split())  # colapsar espacios
+    return s.upper()
+
+# Aliases objetivo y exclusiones
+TARGET_ALIASES = ["POT T1", "POT T2", "POT T3", "POT T4", "POT T5"]
+TARGET_ALIASES_NORM = [normalize_alias(x) for x in TARGET_ALIASES]
+
+def is_excluded(alias: str) -> bool:
+    """Excluir cualquier cosa que parezca 'alumbrado'."""
+    a = normalize_alias(alias)
+    return "ALUMBR" in a  # excluye ALUMBR, ALUMBRADO, etc.
+
 # ------------------------------------------------------------
-# APP
+# CARGA DE DATOS Y ÚLTIMO VALOR POR ALIAS
 # ------------------------------------------------------------
-require_login()
+st.title("📊 BMS – Distribución de Potencias (T1–T5)")
 
-st.title("📊 BMS Dashboard")
-st.caption("Lectura directa desde Supabase • HTTPS • Responsive")
-
-with st.sidebar:
-    st.header("Filtros")
-    days = st.slider("Días a mostrar", 1, 60, 7, 1)
-    punto_clave = st.text_input("punto_clave exacto (opcional)", value="")
-    show_raw = st.checkbox("Mostrar tabla completa", value=False)
-
-# Carga de datos
-try:
-    df = supabase_select_range(days=days, punto_clave=(punto_clave or None))
-except Exception as e:
-    st.error(f"Error leyendo Supabase: {e}")
-    st.stop()
+with st.spinner("Cargando datos…"):
+    try:
+        df = supabase_select_last_hours(hours=24)
+    except Exception as e:
+        st.error(f"Error leyendo Supabase: {e}")
+        st.stop()
 
 if df.empty:
-    st.info("No hay datos para el rango/criterio seleccionado.")
-    st.stop()
+    st.info("No hay datos en las últimas 24 horas.")
+    # Auto-refresh igualmente para cuando lleguen datos
+    time.sleep(AUTO_REFRESH_SECONDS)
+    st.experimental_rerun()
 
-# Columnas principales
-colL, colR = st.columns([2, 1], gap="large")
+# Filtrado seguro: fuera cualquier alias de alumbrado
+df = df[~df["punto_alias"].fillna("").apply(is_excluded)]
 
-with colL:
-    st.subheader("Serie temporal")
-    puntos = sorted(df["punto_alias"].dropna().unique().tolist())
-    sel = st.multiselect("Selecciona puntos", puntos, default=puntos[: min(5, len(puntos))])
+# Tomar el último valor por alias (el más reciente)
+last_idx = df.groupby("punto_alias")["timestamp_utc"].idxmax()
+df_last = df.loc[last_idx, ["punto_alias", "valor", "timestamp_utc"]].copy()
 
-    if sel:
-        df_plot = df[df["punto_alias"].isin(sel)].dropna(subset=["timestamp_utc", "valor"])
-        pivot = df_plot.pivot_table(index="timestamp_utc", columns="punto_alias", values="valor", aggfunc="mean").sort_index()
-        st.line_chart(pivot)
+# Mapear a nuestros objetivos (POT T1..T5), tolerando diferencias de mayúsculas/espacios
+df_last["alias_norm"] = df_last["punto_alias"].apply(normalize_alias)
+
+# Construir la lista final de (alias_oficial, valor) en el orden deseado
+rows = []
+for wanted_norm, wanted_original in zip(TARGET_ALIASES_NORM, TARGET_ALIASES):
+    match = df_last[df_last["alias_norm"] == wanted_norm]
+    if not match.empty:
+        val = match["valor"].iloc[0]
+        rows.append({"alias": wanted_original, "valor": float(val) if pd.notna(val) else 0.0})
     else:
-        st.info("Selecciona al menos un punto.")
+        # Si falta algún alias, lo ponemos a 0 para que el gráfico sea estable
+        rows.append({"alias": wanted_original, "valor": 0.0})
 
-with colR:
-    st.subheader("KPIs (último valor)")
-    last_idx = df.groupby("punto_alias")["timestamp_utc"].idxmax()
-    df_last = df.loc[last_idx, ["punto_alias", "valor", "timestamp_utc"]].sort_values("punto_alias")
-    for _, row in df_last.iterrows():
-        txt = f"{row['valor']:.2f}" if pd.notna(row["valor"]) else "—"
-        st.metric(label=row["punto_alias"], value=txt)
+df_pie = pd.DataFrame(rows)
 
-    st.markdown("---")
-    st.subheader("Tabla")
-    if show_raw:
-        st.dataframe(df.sort_values(["punto_alias", "timestamp_utc"], ascending=[True, False]), use_container_width=True, height=420)
-    else:
-        n = st.slider("Últimos N por punto", 10, 500, 100, 10)
-        df_sorted = df.sort_values(["punto_alias", "timestamp_utc"], ascending=[True, False])
-        df_tailn = df_sorted.groupby("punto_alias").head(n)
-        st.dataframe(df_tailn, use_container_width=True, height=420)
+# Suma total y hora de actualización
+total_kw = df_pie["valor"].sum()
+last_ts_utc = df["timestamp_utc"].max()
+last_ts_local = last_ts_utc.astimezone(LOCAL_TZ) if pd.notna(last_ts_utc) else None
 
-st.caption("© BMS Dashboard • Streamlit + Supabase")
+# ------------------------------------------------------------
+# CABECERA: TOTAL GRANDE + ÚLTIMA ACTUALIZACIÓN
+# ------------------------------------------------------------
+st.markdown(f"<div class='big-total'>{total_kw:,.2f} kW</div>", unsafe_allow_html=True)
+if last_ts_local:
+    st.markdown(f"<div class='sub'>Última actualización: {last_ts_local.strftime('%Y-%m-%d %H:%M:%S %Z')}</div>", unsafe_allow_html=True)
+st.markdown("---")
+
+# ------------------------------------------------------------
+# GRÁFICO DE TARTA
+# ------------------------------------------------------------
+# Evitar que todo sea 0 (Plotly no pinta bien el pie vacío)
+if (df_pie["valor"] > 0).any():
+    fig = px.pie(
+        df_pie,
+        names="alias",
+        values="valor",
+        hole=0.35,
+        title=None
+    )
+    # Mostrar etiqueta con valor y porcentaje
+    fig.update_traces(textposition="inside", textinfo="label+percent", hovertemplate="%{label}: %{value:.2f} kW<br>%{percent}")
+    fig.update_layout(
+        showlegend=True,
+        legend_title_text="Potencias",
+        margin=dict(l=10, r=10, t=10, b=10),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No hay valores distintos de 0 para POT T1..T5 en el último periodo.")
+
+# Tabla pequeña (opcional, informativa)
+st.markdown("#### Valores actuales (kW)")
+st.dataframe(
+    df_pie.sort_values("alias").assign(valor=lambda d: d["valor"].round(2)),
+    use_container_width=True, height=240
+)
+
+st.caption("© BMS Dashboard • Streamlit + Supabase • Refresco automático cada 60 s")
+
+# ------------------------------------------------------------
+# AUTO-REFRESH CADA MINUTO (SIN PERDER LOGIN)
+# ------------------------------------------------------------
+time.sleep(AUTO_REFRESH_SECONDS)
+st.experimental_rerun()
