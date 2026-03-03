@@ -3,32 +3,36 @@ services:
     name: bms-dashboard
     env: python
     plan: free
-    autoDeploy: false
+    # No fijamos region para evitar conflictos si la instancia ya existe
+    autoDeploy: false  # para que no vuelva a desplegar solo
 
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
 
+    # 1) Creamos la carpeta .streamlit
+    # 2) Copiamos el Secret File que Render guarda en /etc/secrets/secrets.toml
+    #    a la ruta que Streamlit espera: /opt/render/project/src/.streamlit/secrets.toml
+    # 3) Lanzamos Streamlit escuchando en $PORT y 0.0.0.0 (obligatorio en Render)
     startCommand: >
+      bash -lc "
+      mkdir -p /opt/render/project/src/.streamlit &&
+      if [ -f /etc/secrets/secrets.toml ]; then
+        cp -f /etc/secrets/secrets.toml /opt/render/project/src/.streamlit/secrets.toml;
+      fi &&
       streamlit run app.py
       --server.port $PORT
       --server.address 0.0.0.0
       --server.headless true
+      "
 
     healthCheckPath: /
 
     envVars:
+      # Versión de Python para el runtime de Render
       - key: PYTHON_VERSION
         value: 3.11.6
 
-      - key: AUTH_USER
-        sync: false
-      - key: AUTH_PASSWORD
-        sync: false
-
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
+      # Si quieres fijar la tabla por ENV (tu app la coge del secrets.toml; esto es opcional)
       - key: SUPABASE_TABLE
         value: bms_dashboard
