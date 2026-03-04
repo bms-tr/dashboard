@@ -50,7 +50,7 @@ def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.D
     }
     query = urlencode(params)
     # 🔧 CORRECCIÓN CRÍTICA: usar & (no &amp;) en los parámetros extra
-    query += f"&timestamp_utc=lte.{iso_z(to_dt)}"
+    query += f"&timestamp_utc=lte.{iso_z(to_dt)}&timestamp_utc=gte.{iso_z(from_dt)}"
 
     if punto_clave:
         query += f"&punto_clave=eq.{punto_clave}"
