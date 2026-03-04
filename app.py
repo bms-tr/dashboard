@@ -136,4 +136,3 @@ with colR:
         st.dataframe(df_tailn, use_container_width=True, height=420)
 
 st.caption("© BMS Dashboard • Streamlit + Supabase")
-``
