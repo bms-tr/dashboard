@@ -29,6 +29,9 @@ COLOR_MAP = {
     "POT T5": "#A8B6A9",
 }
 
+def fmt(x):
+    return f"{x:,.0f}".replace(",", ".")
+
 # ============================================================
 # LOGIN
 # ============================================================
@@ -47,7 +50,7 @@ def require_login():
     st.stop()
 
 # ============================================================
-# FONDO RESPONSIVE + OCULTAR HEADER / FOOTER
+# FONDO RESPONSIVE
 # ============================================================
 def aplicar_fondo_css():
     try:
@@ -59,16 +62,24 @@ def aplicar_fondo_css():
     st.markdown(
         f"""
         <style>
+        html, body, .stApp {{
+            height: 100%;
+            width: 100%;
+            overflow: visible;
+        }}
+
         .stApp {{
             background-image: url("data:image/jpg;base64,{b64}");
             background-size: contain !important;
             background-position: top center !important;
             background-repeat: no-repeat !important;
         }}
+
         header[data-testid="stHeader"] {{display:none !important;}}
         footer {{display:none !important;}}
         #MainMenu {{visibility:hidden !important;}}
         [data-testid="stDecoration"] {{display:none !important;}}
+
         .block-container {{
             padding-top: 0rem !important;
         }}
@@ -78,36 +89,34 @@ def aplicar_fondo_css():
     )
 
 # ============================================================
-# SUPABASE (datos desde 00:00)
+# SUPABASE
 # ============================================================
-def iso_z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+def iso_z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00","Z")
 
 def supabase_cargar_hoy():
     base_url = st.secrets["supabase"]["url"].rstrip("/")
     key      = st.secrets["supabase"]["key"]
     table    = st.secrets["supabase"]["table"]
 
-    ahora_local = datetime.now(TZ)
-    inicio_local = ahora_local.replace(hour=0, minute=0, second=0, microsecond=0)
-    inicio_utc = inicio_local.astimezone(timezone.utc)
-    ahora_utc  = ahora_local.astimezone(timezone.utc)
+    now_local = datetime.now(TZ)
+    start_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = start_local.astimezone(timezone.utc)
+    now_utc   = now_local.astimezone(timezone.utc)
 
     q = [
         "select=timestamp_utc,punto_alias,punto_clave,valor",
         "order=timestamp_utc.desc",
-        f"timestamp_utc=gte.{iso_z(inicio_utc)}",
-        f"timestamp_utc=lte.{iso_z(ahora_utc)}"
+        f"timestamp_utc=gte.{iso_z(start_utc)}",
+        f"timestamp_utc=lte.{iso_z(now_utc)}"
     ]
+
     url = f"{base_url}/rest/v1/{table}?" + "&".join(q)
-    headers = {
-        "apikey": key,
-        "Authorization": f"Bearer {key}",
-        "Range": "0-28799"
-    }
+    headers = {"apikey": key, "Authorization": f"Bearer {key}", "Range":"0-28799"}
 
     r = requests.get(url, headers=headers, timeout=15)
     r.raise_for_status()
     df = pd.DataFrame(r.json())
+
     if df.empty:
         return df
 
@@ -115,10 +124,11 @@ def supabase_cargar_hoy():
     df["hora_local"] = df["timestamp_utc"].dt.tz_convert(TZ)
     df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
     df["punto_alias"] = df["punto_alias"].astype(str).str.strip()
+
     return df.sort_values("timestamp_utc")
 
 # ============================================================
-# TIEMPO
+# METEO
 # ============================================================
 def obtener_tiempo():
     try:
@@ -130,7 +140,7 @@ def obtener_tiempo():
             float(j["current_condition"][0]["temp_C"]),
             float(j["current_condition"][0]["FeelsLikeC"]),
             int(j["current_condition"][0]["humidity"]),
-            int(j["current_condition"][0]["windspeedKmph"]),
+            int(j["current_condition"][0]["windspeedKmph"])
         )
     except:
         return None, None, None, None, None
@@ -142,17 +152,17 @@ require_login()
 aplicar_fondo_css()
 
 # ============================================================
-# CABECERA SUPERIOR
+# CABECERA: FECHA/HORA/TIEMPO (DESPLAZADAS A LA IZQUIERDA)
 # ============================================================
-c1, c2, c3 = st.columns([1.6, 1.2, 1.2])
+c1, c2, c3 = st.columns([1.4, 1.4, 1.2])  # más a la izquierda
 
 with c3:
-    hoy = datetime.now(TZ).strftime("%Y-%m-%d")
+    hoy  = datetime.now(TZ).strftime("%Y-%m-%d")
     hora = datetime.now(TZ).strftime("%H:%M")
 
     st.markdown(
         f"""
-        <div style="text-align:right; padding-right:80px;">
+        <div style="text-align:right; padding-right:250px;">
             <div style="font-size:36px; font-weight:800; color:#111;">{hoy}</div>
             <div style="font-size:54px; font-weight:900; color:#111; margin-top:-10px;">{hora}</div>
         </div>
@@ -160,14 +170,15 @@ with c3:
         unsafe_allow_html=True
     )
 
-    e,t,f,h,v = obtener_tiempo()
+    e, t, f_, h_, v_ = obtener_tiempo()
     if e:
         st.markdown(
             f"""
-            <div style="text-align:right; font-size:18px; color:#222; padding-right:80px; font-weight:600;">
+            <div style="text-align:right; padding-right:250px;
+                        font-size:18px; font-weight:600; color:#222;">
                 {e} · <b>{t:.1f}°C</b><br>
                 <span style="font-size:14px;color:#333">
-                    Sensación {f:.1f}°C · Humedad {h}% · Viento {v} km/h
+                    Sensación {f_:.1f}°C · Humedad {h_}% · Viento {v_} km/h
                 </span>
             </div>
             """,
@@ -175,100 +186,80 @@ with c3:
         )
 
 # ============================================================
-# CARGAR DATOS HOY
+# DATOS HOY
 # ============================================================
 df = supabase_cargar_hoy()
 if df.empty:
-    st.info("Sin datos hoy.")
+    st.info("Sin datos.")
     time.sleep(60)
     st.experimental_rerun()
 
 last_idx = df.groupby("punto_alias")["timestamp_utc"].idxmax()
 df_last = df.loc[last_idx]
 
+# Instantáneo
 inst_vals = []
 for a in ALIASES_INSTANT:
     v = df_last[df_last["punto_alias"]==a]["valor"]
     inst_vals.append(float(v.iloc[0]) if not v.empty else 0.0)
 df_instant = pd.DataFrame({"alias":ALIASES_INSTANT, "valor":inst_vals})
 
+# Acumulado (kWh)
 df_kwh = (
     df[df["punto_alias"].isin(ALIASES_INSTANT)]
     .assign(kwh=lambda x: x["valor"]/60)
-    .groupby("punto_alias")["kwh"]
-    .sum()
+    .groupby("punto_alias")["kwh"].sum()
 )
 df_acum = pd.DataFrame({
-    "alias":ALIASES_INSTANT,
-    "kwh":[df_kwh[a] if a in df_kwh else 0 for a in ALIASES_INSTANT]
+    "alias": ALIASES_INSTANT,
+    "kwh": [df_kwh[a] if a in df_kwh else 0 for a in ALIASES_INSTANT]
 })
 
 total_inst = df_instant["valor"].sum()
 total_kwh  = df_acum["kwh"].sum()
 
-def fmt(x): return f"{x:,.0f}".replace(",", ".")
-
 # ============================================================
-# TARTAS SUPERIORES
+# TARTAS Y TOTALES (MÁS CERRADAS ENTRE SÍ)
 # ============================================================
-col_t1, col_t2, col_t3 = st.columns([1.2, 1.2, 1.0])
+col_t1, col_t2, col_tot = st.columns([1.15, 1.15, 0.9])
 
 # --- TARTA INSTANTÁNEA
 with col_t1:
     st.markdown("### Potencia instantánea")
-    fig1 = px.pie(
-        df_instant,
-        names="alias",
-        values="valor",
-        color="alias",
-        hole=0.35,
-        color_discrete_map=COLOR_MAP,
-        height=230
-    )
+    fig1 = px.pie(df_instant, names="alias", values="valor",
+                  color="alias", color_discrete_map=COLOR_MAP,
+                  hole=0.35, height=230)
     fig1.update_traces(textinfo="label+value+percent", textposition="inside")
-    fig1.update_layout(showlegend=True, margin=dict(l=0,r=0,t=5,b=5))
+    fig1.update_layout(showlegend=True, margin=dict(l=0,r=0,t=0,b=0))
     st.plotly_chart(fig1, use_container_width=True)
 
 # --- TARTA ACUMULADA
 with col_t2:
     st.markdown("### Energía acumulada del día")
-    fig2 = px.pie(
-        df_acum,
-        names="alias",
-        values="kwh",
-        color="alias",
-        hole=0.35,
-        color_discrete_map=COLOR_MAP,
-        height=230
-    )
+    fig2 = px.pie(df_acum, names="alias", values="kwh",
+                  color="alias", color_discrete_map=COLOR_MAP,
+                  hole=0.35, height=230)
     fig2.update_traces(textinfo="value+percent", textposition="inside")
-    fig2.update_layout(showlegend=False, margin=dict(l=0,r=0,t=5,b=5))
+    fig2.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0))
     st.plotly_chart(fig2, use_container_width=True)
 
-# --- TOTALES
-with col_t3:
+# --- TOTALES (sin decimales + punto miles)
+with col_tot:
     st.markdown("### Total Instantáneo")
     st.markdown(
-        f"""
-        <div style="font-size:48px; font-weight:900; color:#111;">
-            {fmt(total_inst)} kW
-        </div>
-        """,
+        f"<div style='font-size:48px; font-weight:900; color:#111;'>{fmt(total_inst)} kW</div>",
         unsafe_allow_html=True
     )
     st.markdown("<br>", unsafe_allow_html=True)
+
     st.markdown("### Acumulado Hoy")
     st.markdown(
-        f"""
-        <div style="font-size:42px; font-weight:800; color:#333;">
-            {fmt(total_kwh)} kWh
-        </div>
-        """,
+        f"<div style='font-size:42px; font-weight:800; color:#333;'>{fmt(total_kwh)} kWh</div>",
         unsafe_allow_html=True
     )
 
 # ============================================================
-# GRÁFICO DE LÍNEAS — MITAD IZQUIERDA, SIN EJE X
+# GRÁFICO DE LÍNEAS — MITAD IZQUIERDA, MÁS PEQUEÑO
 # ============================================================
 line_left, line_right = st.columns([1,1])
 
@@ -280,13 +271,13 @@ with line_left:
         .pivot_table(index="hora_local", columns="punto_alias", values="valor")
         .sort_index()
     )
-
     for a in ALIASES_LINES:
         if a not in pivot.columns:
             pivot[a] = None
     pivot = pivot[ALIASES_LINES]
 
     fig_line = go.Figure()
+
     for col in ALIASES_LINES:
         fig_line.add_trace(go.Scatter(
             x=pivot.index,
@@ -295,6 +286,7 @@ with line_left:
             name=col
         ))
 
+    # OCULTAR EJE X
     fig_line.update_xaxes(
         showgrid=False,
         showticklabels=False,
@@ -306,15 +298,15 @@ with line_left:
     fig_line.update_yaxes(showgrid=True)
 
     fig_line.update_layout(
-        height=280,
-        margin=dict(l=0,r=0,t=10,b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0)
+        height=220,   # más pequeño
+        margin=dict(l=0,r=0,t=5,b=0),
+        legend=dict(orientation="h", y=1.02)
     )
 
     st.plotly_chart(fig_line, use_container_width=True)
 
 with line_right:
-    st.markdown("")  # espacio reservado a futuro
+    st.markdown("")
 
 # ============================================================
 # AUTO REFRESH
