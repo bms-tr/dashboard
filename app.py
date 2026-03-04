@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
+from streamlit.components.v1 import html as st_html
 
 # ============================================================
 # CONFIGURACIÓN GENERAL
@@ -31,7 +32,7 @@ COLOR_MAP = {
     "POT T5": "#A8B6A9",
 }
 
-LINE_HEIGHT = 216
+LINE_HEIGHT = 216  # altura del gráfico de líneas y de los bloques de equipos
 
 def fmt_int(x: float) -> str:
     try:
@@ -83,7 +84,7 @@ def aplicar_fondo_css():
 
         .stApp {{
             background-image: url("data:image/jpg;base64,{b64}");
-            background-size: contain !important;
+            background-size: contain !important;   /* SIEMPRE completa */
             background-position: top center !important;
             background-repeat: no-repeat !important;
         }}
@@ -96,14 +97,15 @@ def aplicar_fondo_css():
         .block-container {{
             padding-top: 0rem !important;
         }}
+
+        h3, h4 {{ margin-top: 0.25rem; margin-bottom: 0.25rem; }}
         </style>
         """,
         unsafe_allow_html=True
     )
 
-
 # ============================================================
-# SUPABASE
+# SUPABASE (00:00 → ahora)
 # ============================================================
 def iso_z(dt): return dt.astimezone(timezone.utc).isoformat().replace("+00:00","Z")
 
@@ -112,7 +114,7 @@ def supabase_cargar_hoy():
     key      = st.secrets["supabase"]["key"]
     table    = st.secrets["supabase"]["table"]
 
-    ahora_local = datetime.now(TZ)
+    ahora_local  = datetime.now(TZ)
     inicio_local = ahora_local.replace(hour=0, minute=0, second=0, microsecond=0)
 
     inicio_utc = inicio_local.astimezone(timezone.utc)
@@ -140,11 +142,10 @@ def supabase_cargar_hoy():
         return df
 
     df["timestamp_utc"] = pd.to_datetime(df["timestamp_utc"], utc=True)
-    df["hora_local"] = df["timestamp_utc"].dt.tz_convert(TZ)
-    df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
-    df["punto_alias"] = df["punto_alias"].astype(str).str.strip()
+    df["hora_local"]    = df["timestamp_utc"].dt.tz_convert(TZ)  # UTC → Madrid
+    df["valor"]         = pd.to_numeric(df["valor"], errors="coerce")
+    df["punto_alias"]   = df["punto_alias"].astype(str).str.strip()
     return df.sort_values("timestamp_utc")
-
 
 # ============================================================
 # METEO
@@ -168,15 +169,15 @@ def obtener_tiempo_madrid():
         return None, None, None, None, None
 
 # ============================================================
-# KPIs EQUIPOS (BC FELIPE / BC CARLOS / GF1 / GF2)
+# FUNCIONES AUX
 # ============================================================
 def ultimo_valor(df, alias):
     rows = df[df["punto_alias"] == alias]
-    if rows.empty: return None
+    if rows.empty:
+        return None
     idx = rows["timestamp_utc"].idxmax()
-    val = rows.loc[idx, "valor"]
     try:
-        return float(val)
+        return float(rows.loc[idx, "valor"])
     except:
         return None
 
@@ -185,18 +186,18 @@ def render_bloque_equipo(col, nombre, alias_marcha, alias_carga, alias_cop, altu
     v_carga  = ultimo_valor(df, alias_carga)
     v_cop    = ultimo_valor(df, alias_cop)
 
-    marcha = 1 if (v_marcha is not None and v_marcha >= 1) else 0
-    carga_pct = int(max(0, min(100, v_carga if v_carga else 0)))
-    cop_str = fmt_decimal_coma(v_cop if v_cop else 0)
+    marcha    = 1 if (v_marcha is not None and v_marcha >= 1) else 0
+    carga_pct = int(max(0, min(100, v_carga if v_carga is not None else 0)))
+    cop_str   = fmt_decimal_coma(v_cop if v_cop is not None else 0)
 
     border_color = "#6CC04A" if marcha else "#BEBEBE"
-    bar_color = "#E00707"
+    bar_color    = "#E00707"
 
     outer_h = altura
     outer_w = 190
     inner_h = outer_h - 45
     inner_w = 90
-    bar_h = int((carga_pct / 100) * (inner_h - 10))
+    bar_h   = int((carga_pct / 100) * (inner_h - 10))
 
     html = f"""
     <div style="
@@ -207,18 +208,15 @@ def render_bloque_equipo(col, nombre, alias_marcha, alias_carga, alias_cop, altu
         display:flex; flex-direction:row;
         padding:6px 10px;
         column-gap:10px;">
-        
+
         <div style="display:flex; flex-direction:column; align-items:center;">
             <div style="
                 width:{inner_w}px; height:{inner_h}px;
                 background:white; border:2px solid #999;
                 border-radius:6px; position:relative; overflow:hidden;">
-                
                 <div style="
-                    position:absolute;
-                    bottom:2px; left:2px;
-                    width:{inner_w-4}px;
-                    height:{bar_h}px;
+                    position:absolute; bottom:2px; left:2px;
+                    width:{inner_w-4}px; height:{bar_h}px;
                     background:{bar_color};">
                 </div>
             </div>
@@ -226,22 +224,14 @@ def render_bloque_equipo(col, nombre, alias_marcha, alias_carga, alias_cop, altu
 
         <div style="display:flex; flex-direction:column;">
             <div style="font-size:18px; font-weight:900; color:#333;">{nombre}</div>
-
-            <div style="font-size:13px; color:#555; line-height:1.1; margin-top:4px;">
-                % USO
-            </div>
-            <div style="font-size:22px; font-weight:800; color:#222;">
-                {carga_pct} %
-            </div>
-
+            <div style="font-size:13px; color:#555; line-height:1.1; margin-top:4px;">% USO</div>
+            <div style="font-size:22px; font-weight:800; color:#222;">{carga_pct} %</div>
             <div style="font-size:13px; margin-top:6px; color:#555;">COP</div>
-            <div style="font-size:24px; font-weight:900; color:#222;">
-                {cop_str}
-            </div>
+            <div style="font-size:24px; font-weight:900; color:#222;">{cop_str}</div>
         </div>
     </div>
     """
-    col.html(html)
+    st_html(html, height=outer_h + 14)
 
 # ============================================================
 # APP
@@ -249,18 +239,18 @@ def render_bloque_equipo(col, nombre, alias_marcha, alias_carga, alias_cop, altu
 require_login()
 aplicar_fondo_css()
 
-# ============================================================
-# CABECERA CENTRADA (NO TRUNCA, NO TAPA LOGO)
-# ============================================================
-fila = st.container()
-c1, c2, c3 = fila.columns([1,1,1])
+# ------------------------------------------------------------
+# CABECERA: TÍTULO (en fondo) + FILA EXCLUSIVA PARA FECHA/HORA
+# ------------------------------------------------------------
+fila_fecha = st.container()
+col_f1, col_f2, col_f3 = fila_fecha.columns([1, 1, 1])
 
-with c2:
-    hoy = datetime.now(TZ).strftime("%Y-%m-%d")
+with col_f2:
+    hoy  = datetime.now(TZ).strftime("%Y-%m-%d")
     hora = datetime.now(TZ).strftime("%H:%M")
-    estado,t_c,f_c,hum,v_kmh = obtener_tiempo_madrid()
+    estado, t_c, f_c, hum, v_kmh = obtener_tiempo_madrid()
 
-    st.markdown(f"""
+    st_html(f"""
     <div style="text-align:center;">
         <div style="font-size:36px; font-weight:800; color:#111;">{hoy}</div>
         <div style="font-size:54px; font-weight:900; color:#111; margin-top:-8px;">{hora}</div>
@@ -268,70 +258,73 @@ with c2:
             {estado if estado else ""}
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """, height=140)
 
-# ============================================================
+# ------------------------------------------------------------
 # CARGA DATOS
-# ============================================================
+# ------------------------------------------------------------
 df = supabase_cargar_hoy()
-
 if df.empty:
     st.info("Sin datos.")
     time.sleep(60); st.rerun()
 
 last_idx = df.groupby("punto_alias")["timestamp_utc"].idxmax()
-df_last = df.loc[last_idx]
+df_last  = df.loc[last_idx, ["punto_alias","valor","hora_local"]]
 
 inst_vals = []
 for a in ALIASES_INSTANT:
     v = df_last[df_last["punto_alias"]==a]["valor"]
-    inst_vals.append(float(v.iloc[0]) if not v.empty else 0)
+    inst_vals.append(float(v.iloc[0]) if not v.empty else 0.0)
 
-df_instant = pd.DataFrame({"alias":ALIASES_INSTANT,"valor":inst_vals})
-df_instant["valor_fmt"]=df_instant["valor"].apply(fmt_int)
+df_instant = pd.DataFrame({"alias":ALIASES_INSTANT, "valor":inst_vals})
+df_instant["valor_fmt"] = df_instant["valor"].apply(fmt_int)
 
 df_kwh_series = (
     df[df["punto_alias"].isin(ALIASES_INSTANT)]
-    .assign(kwh=lambda x:x["valor"]/60)
+    .assign(kwh=lambda x: x["valor"]/60)
     .groupby("punto_alias")["kwh"].sum()
 )
 df_acum = pd.DataFrame({
-    "alias":ALIASES_INSTANT,
-    "kwh":[df_kwh_series.get(a,0) for a in ALIASES_INSTANT]
+    "alias": ALIASES_INSTANT,
+    "kwh": [df_kwh_series.get(a, 0) for a in ALIASES_INSTANT]
 })
-df_acum["kwh_fmt"]=df_acum["kwh"].apply(fmt_int)
+df_acum["kwh_fmt"] = df_acum["kwh"].apply(fmt_int)
 
-total_inst = sum(inst_vals)
+total_inst = float(sum(inst_vals))
 total_kwh  = float(df_acum["kwh"].sum())
 
-# ============================================================
-# TARTAS + TOTALES
-# ============================================================
-col_t1,col_t2,col_tot = st.columns([1.05,1.05,0.75],gap="small")
+# ------------------------------------------------------------
+# TARTAS + TOTALES (compactas)
+# ------------------------------------------------------------
+col_t1, col_t2, col_tot = st.columns([1.05, 1.05, 0.75], gap="small")
 
 with col_t1:
     st.markdown("### Potencia instantánea")
     fig1 = px.pie(
-        df_instant,names="alias",values="valor",
-        color="alias",color_discrete_map=COLOR_MAP,
-        hole=0.37,height=210,custom_data=["valor_fmt"]
+        df_instant, names="alias", values="valor",
+        color="alias", color_discrete_map=COLOR_MAP,
+        hole=0.37, height=210, custom_data=["valor_fmt"]
     )
-    fig1.update_traces(textposition="inside",
-        texttemplate="%{label}<br>%{customdata[0]} kW<br>%{percent}")
-    fig1.update_layout(showlegend=True,margin=dict(l=0,r=0,t=5,b=0))
-    st.plotly_chart(fig1,use_container_width=True)
+    fig1.update_traces(
+        textposition="inside",
+        texttemplate="%{label}<br>%{customdata[0]} kW<br>%{percent}"
+    )
+    fig1.update_layout(showlegend=True, margin=dict(l=0, r=0, t=5, b=0))
+    st.plotly_chart(fig1, use_container_width=True)
 
 with col_t2:
     st.markdown("### Energía acumulada del día")
     fig2 = px.pie(
-        df_acum,names="alias",values="kwh",
-        color="alias",color_discrete_map=COLOR_MAP,
-        hole=0.37,height=210,custom_data=["kwh_fmt"]
+        df_acum, names="alias", values="kwh",
+        color="alias", color_discrete_map=COLOR_MAP,
+        hole=0.37, height=210, custom_data=["kwh_fmt"]
     )
-    fig2.update_traces(textposition="inside",
-        texttemplate="%{label}<br>%{customdata[0]} kWh<br>%{percent}")
-    fig2.update_layout(showlegend=False,margin=dict(l=0,r=0,t=5,b=0))
-    st.plotly_chart(fig2,use_container_width=True)
+    fig2.update_traces(
+        textposition="inside",
+        texttemplate="%{label}<br>%{customdata[0]} kWh<br>%{percent}"
+    )
+    fig2.update_layout(showlegend=False, margin=dict(l=0, r=0, t=5, b=0))
+    st.plotly_chart(fig2, use_container_width=True)
 
 with col_tot:
     st.markdown("### Total Instantáneo")
@@ -345,44 +338,43 @@ with col_tot:
         unsafe_allow_html=True
     )
 
-# ============================================================
+# ------------------------------------------------------------
 # GRÁFICO DE LÍNEAS + 4 BLOQUES (OPCIÓN A)
-# ============================================================
-line_left,line_right = st.columns([0.60,1.40],gap="small")
+# ------------------------------------------------------------
+line_left, line_right = st.columns([0.60, 1.40], gap="small")
 
 with line_left:
     st.markdown("### Potencias del día")
     df_lines = df[df["punto_alias"].isin(ALIASES_LINES)]
-    pivot = df_lines.pivot_table(index="hora_local",columns="punto_alias",values="valor").sort_index()
-
+    pivot = df_lines.pivot_table(index="hora_local", columns="punto_alias", values="valor").sort_index()
     for a in ALIASES_LINES:
         if a not in pivot.columns:
-            pivot[a]=None
-    pivot=pivot[ALIASES_LINES]
+            pivot[a] = None
+    pivot = pivot[ALIASES_LINES]
 
     fig = go.Figure()
     for col in ALIASES_LINES:
-        fig.add_trace(go.Scatter(x=pivot.index,y=pivot[col],mode="lines",name=col,line=dict(width=1.5)))
+        fig.add_trace(go.Scatter(x=pivot.index, y=pivot[col], mode="lines", name=col, line=dict(width=1.5)))
 
-    fig.update_xaxes(showgrid=False,showticklabels=False,ticks="",zeroline=False,visible=True)
+    fig.update_xaxes(showgrid=False, showticklabels=False, ticks="", zeroline=False, visible=True)  # eje X oculto
     fig.update_yaxes(showgrid=True)
 
     fig.update_layout(
-        height=LINE_HEIGHT,
-        margin=dict(l=0,r=0,t=5,b=0),
-        legend=dict(orientation="h",y=1.02,x=0,font=dict(size=10))
+        height=LINE_HEIGHT,  # 216 px
+        margin=dict(l=0, r=0, t=5, b=0),
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=10))
     )
-    st.plotly_chart(fig,use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
 with line_right:
-    cA,cB,cC,cD = st.columns(4,gap="small")
-    render_bloque_equipo(cA,"BC FELIPE","BC FELIPE","CARGA BC FELIPE","COP BC FELIPE",LINE_HEIGHT)
-    render_bloque_equipo(cB,"BC CARLOS","BC CARLOS","CARGA BC CARLOS","COP BC CARLOS",LINE_HEIGHT)
-    render_bloque_equipo(cC,"GF1","GF1","CARGA GF1","COP GF1",LINE_HEIGHT)
-    render_bloque_equipo(cD,"GF2","GF2","CARGA GF2","COP GF2",LINE_HEIGHT)
+    cA, cB, cC, cD = st.columns(4, gap="small")
+    render_bloque_equipo(cA, "BC FELIPE", "BC FELIPE", "CARGA BC FELIPE", "COP BC FELIPE", LINE_HEIGHT)
+    render_bloque_equipo(cB, "BC CARLOS", "BC CARLOS", "CARGA BC CARLOS", "COP BC CARLOS", LINE_HEIGHT)
+    render_bloque_equipo(cC, "GF1", "GF1", "CARGA GF1", "COP GF1", LINE_HEIGHT)
+    render_bloque_equipo(cD, "GF2", "GF2", "CARGA GF2", "COP GF2", LINE_HEIGHT)
 
-# ============================================================
+# ------------------------------------------------------------
 # AUTO REFRESH
-# ============================================================
+# ------------------------------------------------------------
 time.sleep(60)
 st.rerun()
