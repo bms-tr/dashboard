@@ -38,7 +38,7 @@ def require_login():
     st.stop()
 
 # ------------------------------------------------------------
-# SUPABASE (consulta: últimos primero → reordenar)
+# SUPABASE (consulta: últimos primero → reordenar asc)
 # ------------------------------------------------------------
 def iso_z(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -68,8 +68,7 @@ def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.D
         "apikey": key,
         "Authorization": f"Bearer {key}",
         "Cache-Control": "no-cache",
-        # ← Hasta 28.800 registros (asegúrate de subir "Max rows" en Supabase)
-        "Range": "0-28799"
+        "Range": "0-28799"   # ← Hasta 28.800 (asegúrate de subir "Max rows" en Supabase)
     }
 
     r = requests.get(url, headers=headers, timeout=20)
@@ -88,107 +87,56 @@ def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.D
     return df
 
 # ------------------------------------------------------------
-# TIEMPO EN MADRID (MSN + fallback wttr.in, todo en °C/km/h)
+# TIEMPO EN MADRID (solo wttr.in, °C/km/h)
 # ------------------------------------------------------------
 def obtener_tiempo_madrid():
-    # MSN Weather (primario)
-    msn = "https://a.msn.com/54/EN-US/ct40.4167,-3.7003?pageocid=ansmsnweather"
     try:
-        r = requests.get(msn, timeout=5)
-        data = r.json()["Weather"][0]["responses"][0]["weather"][0]["current"]
-        estado = data["cap"]              # p.ej. "Mayormente soleado"
-        temp_f = data["temp"]
-        feels_f = data["feels"]
-        humedad = data["rh"]
-        viento_mph = data["windSpd"]
-
-        # Convertir a °C y km/h
-        temp_c   = round((temp_f  - 32) * 5/9, 1)
-        feels_c  = round((feels_f - 32) * 5/9, 1)
-        viento_kmh = round(viento_mph * 1.60934)
+        r = requests.get("https://wttr.in/Madrid?format=j1", timeout=6)
+        j = r.json()
+        estado = j["current_condition"][0]["weatherDesc"][0]["value"]
+        temp_c = float(j["current_condition"][0]["temp_C"])
+        feels_c = float(j["current_condition"][0]["FeelsLikeC"])
+        humedad = int(j["current_condition"][0]["humidity"])
+        viento_kmh = int(j["current_condition"][0]["windspeedKmph"])
         return estado, temp_c, feels_c, humedad, viento_kmh
     except:
-        # Fallback: wttr.in (sin claves)
-        try:
-            r = requests.get("https://wttr.in/Madrid?format=j1", timeout=5)
-            j = r.json()
-            estado = j["current_condition"][0]["weatherDesc"][0]["value"]
-            temp_c = float(j["current_condition"][0]["temp_C"])
-            feels_c = float(j["current_condition"][0]["FeelsLikeC"])
-            humedad = int(j["current_condition"][0]["humidity"])
-            viento_kmh = int(j["current_condition"][0]["windspeedKmph"])
-            return estado, temp_c, feels_c, humedad, viento_kmh
-        except:
-            return None, None, None, None, None
+        return None, None, None, None, None
 
 # ------------------------------------------------------------
 # APP
 # ------------------------------------------------------------
 require_login()
 
+# CABECERA
 st.title("📊 BMS Dashboard")
 st.caption("Actualización automática cada minuto — Hora local Madrid")
 
-# ------------------------------------------------------------
-# RELOJ ARRIBA DERECHA (sin segundos + fijado)
-# ------------------------------------------------------------
-hora_local = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
-st.markdown(
-    f"""
-    <style>
-    .capa-fecha {{
-        position: fixed;
-        top: 10px;
-        right: 20px;
-        z-index: 9999;
-        font-size: 20px;
-        font-weight: 700;
-        color: #222;
-    }}
-    .capa-tiempo {{
-        position: fixed;
-        top: 40px;
-        right: 20px;
-        z-index: 9999;
-        font-size: 14px;
-        color: #333;
-        background: rgba(255,255,255,0.7);
-        padding: 6px 12px;
-        border-radius: 6px;
-    }}
-    </style>
-    <div class="capa-fecha">{hora_local}</div>
-    """,
-    unsafe_allow_html=True
-)
+# ======= Fila superior: a la derecha Fecha/Hora + Tiempo =======
+col_left, col_spacer, col_right = st.columns([1, 2, 1], gap="large")
 
-# ------------------------------------------------------------
-# TIEMPO (debajo del reloj)
-# ------------------------------------------------------------
-estado, temp_c, feels_c, humedad, viento_kmh = obtener_tiempo_madrid()
-if estado:
-    st.markdown(
-        f"""
-        <div class="capa-tiempo">
-            {estado} · {temp_c}°C (sensación {feels_c}°C)<br>
-            Humedad {humedad}% · Viento {viento_kmh} km/h
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+with col_right:
+    # Hora local sin segundos
+    hora_local = datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+    st.markdown(f"**{hora_local}**", help="Hora Madrid (sin segundos)")
 
-# ------------------------------------------------------------
-# SIDEBAR ORIGINAL
-# ------------------------------------------------------------
+    # Tiempo actual
+    estado, temp_c, feels_c, humedad, viento_kmh = obtener_tiempo_madrid()
+    if estado:
+        st.markdown(
+            f"{estado} · **{temp_c}°C** (sensación {feels_c}°C)  \n"
+            f"Humedad {humedad}% · Viento {viento_kmh} km/h"
+        )
+    else:
+        st.markdown("_Tiempo no disponible en este momento_")
+
+# ======= Sidebar (igual que tenías) =======
 with st.sidebar:
     st.header("Filtros")
     days = st.slider("Días a mostrar", 1, 60, 7, 1)
     punto_clave = st.text_input("punto_clave exacto (opcional)", value="")
     show_raw = st.checkbox("Mostrar tabla completa", value=False)
 
-# ------------------------------------------------------------
-# CARGA DE DATOS
-# ------------------------------------------------------------
+# ======= Datos =======
 try:
     df = supabase_select_range(days=days, punto_clave=(punto_clave or None))
 except Exception as e:
@@ -200,26 +148,20 @@ if df.empty:
     time.sleep(60)
     st.experimental_rerun()
 
-# Añadir columna hora local (Madrid)
+# Hora local
 df["hora_local"] = df["timestamp_utc"].dt.tz_convert(TZ)
 
-# ------------------------------------------------------------
-# LAYOUT ORIGINAL
-# ------------------------------------------------------------
+# ======= Cuerpo principal (tu layout original) =======
 colL, colR = st.columns([2, 1], gap="large")
 
 with colL:
     st.subheader("Serie temporal")
     puntos = sorted(df["punto_alias"].dropna().unique().tolist())
     sel = st.multiselect("Selecciona puntos", puntos, default=puntos[: min(5, len(puntos))])
-
     if sel:
         df_plot = df[df["punto_alias"].isin(sel)].dropna(subset=["hora_local", "valor"])
         pivot = df_plot.pivot_table(
-            index="hora_local",
-            columns="punto_alias",
-            values="valor",
-            aggfunc="mean"
+            index="hora_local", columns="punto_alias", values="valor", aggfunc="mean"
         ).sort_index()
         st.line_chart(pivot)
     else:
@@ -250,8 +192,6 @@ with colR:
 
 st.caption("© BMS Dashboard — Auto‑refresh 60 s")
 
-# ------------------------------------------------------------
-# AUTO REFRESH
-# ------------------------------------------------------------
+# ======= Auto‑refresh =======
 time.sleep(60)
 st.experimental_rerun()
