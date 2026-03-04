@@ -49,13 +49,19 @@ def supabase_select_range(days: int = 1, punto_clave: str | None = None) -> pd.D
         "order": "timestamp_utc.asc",
     }
     query = urlencode(params)
+    # 🔧 CORRECCIÓN CRÍTICA: usar & (no &amp;) en los parámetros extra
     query += f"&timestamp_utc=lte.{iso_z(to_dt)}"
 
     if punto_clave:
         query += f"&punto_clave=eq.{punto_clave}"
 
     url = f"{base_url}/rest/v1/{table}?{query}"
-    headers = {"apikey": key, "Authorization": f"Bearer {key}"}
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        # Evitar respuestas cacheadas por alguna capa intermedia
+        "Cache-Control": "no-cache"
+    }
 
     r = requests.get(url, headers=headers, timeout=15)
     if r.status_code >= 400:
@@ -130,3 +136,4 @@ with colR:
         st.dataframe(df_tailn, use_container_width=True, height=420)
 
 st.caption("© BMS Dashboard • Streamlit + Supabase")
+``
