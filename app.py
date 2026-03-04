@@ -45,7 +45,7 @@ def require_login():
     if st.button("Entrar"):
         if u == st.secrets["auth"]["user"] and p == st.secrets["auth"]["password"]:
             st.session_state["auth_ok"] = True
-            st.experimental_rerun()
+            st.rerun()  # ← actualizado
         else:
             st.error("Credenciales incorrectas.")
     st.stop()
@@ -71,7 +71,7 @@ def aplicar_fondo_css():
 
         .stApp {{
             background-image: url("data:image/jpg;base64,{b64}");
-            background-size: contain !important;       /* SIEMPRE completa */
+            background-size: contain !important;           /* SIEMPRE completa */
             background-position: top center !important;
             background-repeat: no-repeat !important;
         }}
@@ -82,9 +82,8 @@ def aplicar_fondo_css():
         #MainMenu {{visibility:hidden !important;}}
         [data-testid="stDecoration"] {{display:none !important;}}
 
-        .block-container {{
-            padding-top: 0rem !important;
-        }}
+        /* Compactar layout global */
+        .block-container {{ padding-top: 0rem !important; }}
         </style>
         """,
         unsafe_allow_html=True
@@ -153,16 +152,16 @@ require_login()
 aplicar_fondo_css()
 
 # ============================================================
-# CABECERA: FECHA/HORA/TIEMPO (MÁS AL CENTRO)
+# CABECERA: FECHA/HORA/TIEMPO (AÚN MÁS AL CENTRO)
 # ============================================================
-# Más centrado: aumentamos el padding-right
-c1, c2, c3 = st.columns([1.4, 1.4, 1.2])   # estructura superior
+# Aumentamos padding-right para no rozar el logo FCC (ajusta si hiciera falta)
+c1, c2, c3 = st.columns([1.4, 1.4, 1.2])
 with c3:
     hoy  = datetime.now(TZ).strftime("%Y-%m-%d")
     hora = datetime.now(TZ).strftime("%H:%M")
     st.markdown(
         f"""
-        <div style="text-align:right; padding-right:340px;">  <!-- desplazado + a la izq -->
+        <div style="text-align:right; padding-right:420px;">
             <div style="font-size:36px; font-weight:800; color:#111;">{hoy}</div>
             <div style="font-size:54px; font-weight:900; color:#111; margin-top:-10px;">{hora}</div>
         </div>
@@ -173,7 +172,7 @@ with c3:
     if e:
         st.markdown(
             f"""
-            <div style="text-align:right; padding-right:340px;
+            <div style="text-align:right; padding-right:420px;
                         font-size:18px; font-weight:600; color:#222;">
                 {e} · <b>{t:.1f}°C</b><br>
                 <span style="font-size:14px;color:#333">
@@ -190,7 +189,7 @@ with c3:
 df = supabase_cargar_hoy()
 if df.empty:
     st.info("Sin datos.")
-    time.sleep(60); st.experimental_rerun()
+    time.sleep(60); st.rerun()  # ← actualizado
 
 last_idx = df.groupby("punto_alias")["timestamp_utc"].idxmax()
 df_last  = df.loc[last_idx]
@@ -201,7 +200,7 @@ for a in ALIASES_INSTANT:
     v = df_last[df_last["punto_alias"]==a]["valor"]
     inst_vals.append(float(v.iloc[0]) if not v.empty else 0.0)
 df_instant = pd.DataFrame({"alias": ALIASES_INSTANT, "valor": inst_vals})
-df_instant["valor_fmt"] = df_instant["valor"].apply(fmt)  # para texto con . de miles
+df_instant["valor_fmt"] = df_instant["valor"].apply(fmt)
 
 # Acumulado (kWh = sum(valor/60))
 df_kwh = (
@@ -209,27 +208,28 @@ df_kwh = (
     .assign(kwh=lambda x: x["valor"]/60)
     .groupby("punto_alias")["kwh"].sum()
 )
-df_acum = pd.DataFrame({"alias": ALIASES_INSTANT,
-                        "kwh": [df_kwh.get(a, 0) for a in ALIASES_INSTANT]})
+df_acum = pd.DataFrame({
+    "alias": ALIASES_INSTANT,
+    "kwh": [df_kwh.get(a, 0) for a in ALIASES_INSTANT]
+})
 df_acum["kwh_fmt"] = df_acum["kwh"].apply(fmt)
 
 total_inst = df_instant["valor"].sum()
 total_kwh  = df_acum["kwh"].sum()
 
 # ============================================================
-# TARTAS Y TOTALES — MÁS JUNTOS (gap pequeño y márgenes 0)
+# TARTAS Y TOTALES — PEGADAS ENTRE SÍ
 # ============================================================
-col_t1, col_t2, col_tot = st.columns([1.15, 1.15, 0.8], gap="small")
+col_t1, col_t2, col_tot = st.columns([1.05, 1.05, 0.75], gap="small")
 
-# --- TARTA INSTANTÁNEA (33% del anterior)
+# --- TARTA INSTANTÁNEA
 with col_t1:
-    st.markdown("### Potencia instantánea")
+    st.markdown("<div style='margin-bottom:2px;'>### Potencia instantánea</div>", unsafe_allow_html=True)
     fig1 = px.pie(
         df_instant, names="alias", values="valor",
         color="alias", color_discrete_map=COLOR_MAP,
-        hole=0.35, height=220, custom_data=["valor_fmt"]
+        hole=0.35, height=210, custom_data=["valor_fmt"]
     )
-    # Texto con valor entero y % (valor con separador de miles)
     fig1.update_traces(
         textposition="inside",
         texttemplate="%{label}<br>%{customdata[0]} kW (%{percent})"
@@ -240,13 +240,13 @@ with col_t1:
     )
     st.plotly_chart(fig1, use_container_width=True)
 
-# --- TARTA ACUMULADA (centrada, sin leyenda)
+# --- TARTA ACUMULADA (sin leyenda)
 with col_t2:
-    st.markdown("### Energía acumulada del día")
+    st.markdown("<div style='margin-bottom:2px;'>### Energía acumulada del día</div>", unsafe_allow_html=True)
     fig2 = px.pie(
         df_acum, names="alias", values="kwh",
         color="alias", color_discrete_map=COLOR_MAP,
-        hole=0.35, height=220, custom_data=["kwh_fmt"]
+        hole=0.35, height=210, custom_data=["kwh_fmt"]
     )
     fig2.update_traces(
         textposition="inside",
@@ -257,25 +257,25 @@ with col_t2:
 
 # --- TOTALES (sin decimales y con . de miles)
 with col_tot:
-    st.markdown("### Total Instantáneo")
+    st.markdown("<div style='margin-bottom:2px;'>### Total Instantáneo</div>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='font-size:48px; font-weight:900; color:#111;'>{fmt(total_inst)} kW</div>",
         unsafe_allow_html=True
     )
-    st.markdown("### Acumulado Hoy")
+    st.markdown("<div style='margin-top:8px; margin-bottom:2px;'>### Acumulado Hoy</div>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='font-size:42px; font-weight:800; color:#333;'>{fmt(total_kwh)} kWh</div>",
         unsafe_allow_html=True
     )
 
 # ============================================================
-# GRÁFICO DE LÍNEAS — AÚN MÁS PEQUEÑO Y ESTRECHO
+# GRÁFICO DE LÍNEAS — MUY PEQUEÑO Y ESTRECHO
 # ============================================================
-# lo dejamos en ~60 % de la columna izquierda para ganar mucho espacio
-line_left, line_right = st.columns([0.6, 1.4], gap="small")
+# Aún más estrecho para liberar espacio a la derecha: 0.45 / 1.55
+line_left, line_right = st.columns([0.45, 1.55], gap="small")
 
 with line_left:
-    st.markdown("### Potencias del día")
+    st.markdown("<div style='margin-top:2px;'>### Potencias del día</div>", unsafe_allow_html=True)
     df_lines = df[df["punto_alias"].isin(ALIASES_LINES)]
     pivot = (
         df_lines
@@ -291,25 +291,25 @@ with line_left:
     for col in ALIASES_LINES:
         fig_line.add_trace(go.Scatter(
             x=pivot.index, y=pivot[col],
-            mode='lines', name=col, line=dict(width=1.5)
+            mode='lines', name=col, line=dict(width=1.2)
         ))
 
-    # Ocultar completamente eje X (ticks, labels, grid)
+    # Ocultar completamente eje X
     fig_line.update_xaxes(showgrid=False, showticklabels=False, ticks="", zeroline=False, visible=True)
     fig_line.update_yaxes(showgrid=True)
 
     fig_line.update_layout(
-        height=180,  # aún más pequeño
-        margin=dict(l=0, r=0, t=5, b=0),
-        legend=dict(orientation="h", y=1.02, x=0)
+        height=160,  # aún más bajo
+        margin=dict(l=0, r=0, t=2, b=0),
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=10))
     )
     st.plotly_chart(fig_line, use_container_width=True)
 
 with line_right:
-    st.markdown("")  # espacio libre reservado para info futura
+    st.markdown("")  # zona libre para info futura
 
 # ============================================================
 # AUTO REFRESH
 # ============================================================
 time.sleep(60)
-st.experimental_rerun()
+st.rerun()  # ← actualizado
